@@ -1,9 +1,9 @@
 // วางค่าจาก Firebase Console > Project settings > Your apps > Web app
 export const firebaseConfig = {
-  apiKey: "REPLACE_ME",
-  authDomain: "REPLACE_ME.firebaseapp.com",
-  projectId: "REPLACE_ME",
-  storageBucket: "REPLACE_ME.firebasestorage.app",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME"
+  authDomain: "ive-bubble-total.firebaseapp.com",
+  projectId: "ive-bubble-total",
+  storageBucket: "ive-bubble-total.firebasestorage.app",
+  messagingSenderId: "477243755266",
+  appId: "1:477243755266:web:4d9ed68942eecd35ca101b",
+  measurementId: "G-D7WTQFEC9X"
 };
