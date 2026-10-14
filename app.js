@@ -1,6 +1,6 @@
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,signInAnonymously,signInWithEmailAndPassword,signOut,onAuthStateChanged} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,collection,doc,onSnapshot,runTransaction,getDoc,getDocs,writeBatch,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,collection,doc,onSnapshot,runTransaction,getDoc,getDocs,writeBatch,serverTimestamp,updateDoc,deleteDoc} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import QRCode from 'https://esm.sh/qrcode@1.5.4';
 import {firebaseConfig} from './firebase-config.js';
 const $=id=>document.getElementById(id);
@@ -23,8 +23,67 @@ if(view==='join'){
   $('responseForm').onsubmit=async e=>{e.preventDefault();if(!currentUser)return;const name=$('name').value.trim(),amount=Number($('amount').value);if(!name||!Number.isFinite(amount)||amount<0||amount>1e9)return;const btn=$('responseForm').querySelector('button');btn.disabled=true;try{await runTransaction(db,async tx=>{const ref=doc(db,'answers',currentUser.uid),snap=await tx.get(ref);if(snap.exists())throw Error('คุณตอบไปแล้ว');tx.set(ref,{name,amount,createdAt:serverTimestamp()});});$('responseForm').hidden=true;$('joinMessage').textContent='ส่งยอดสำเร็จ ขอบคุณครับ!';}catch(err){$('joinMessage').textContent='ส่งไม่ได้: '+err.message;btn.disabled=false;}};
 }
 if(view==='admin'){
-  onAuthStateChanged(auth,user=>{currentUser=user;$('loginForm').hidden=!!user;$('adminActions').hidden=!user;$('adminEmail').textContent=user?.email||'';$('status').textContent=user?'เข้าสู่ระบบแล้ว':'กรุณาเข้าสู่ระบบ';});
-  $('loginForm').onsubmit=async e=>{e.preventDefault();try{await signInWithEmailAndPassword(auth,$('email').value,$('password').value);$('adminMessage').textContent='เข้าสู่ระบบสำเร็จ';}catch(err){$('adminMessage').textContent=err.message;}};
+  let unsubscribe=null, adminRows=[];
+  const list=$('adminList'),search=$('adminSearch');
+  const showMessage=(message)=>{$('adminMessage').textContent=message;};
+  const drawList=()=>{
+    const q=search.value.trim().toLocaleLowerCase('th');
+    const filtered=adminRows.filter(r=>r.name.toLocaleLowerCase('th').includes(q));
+    $('adminSummary').textContent='ทั้งหมด '+fmt(adminRows.length)+' คน | '+fmt(adminRows.reduce((sum,r)=>sum+r.amount,0))+' บาท';
+    list.replaceChildren();
+    if(!filtered.length){const p=document.createElement('p');p.textContent='ไม่พบรายการ';list.append(p);return;}
+    filtered.forEach(r=>{
+      const row=document.createElement('div');row.className='admin-row';
+      const info=document.createElement('div');info.className='admin-row-info';
+      const name=document.createElement('strong');name.textContent=r.name;
+      const amount=document.createElement('span');amount.textContent=fmt(r.amount)+' บาท';
+      info.append(name,amount);
+      const actions=document.createElement('div');actions.className='admin-row-buttons';
+      const edit=document.createElement('button');edit.textContent='แก้ไข';edit.type='button';
+      edit.onclick=async()=>{
+        const input=prompt('แก้ไขยอดของ '+r.name+' (บาท)',String(r.amount));
+        if(input===null)return;
+        const value=Number(input.trim());
+        if(!input.trim()||!Number.isFinite(value)||value<0||value>1e9||Math.round(value*100)!==value*100){showMessage('กรุณาใส่ตัวเลข 0 ถึง 1,000,000,000 ไม่เกิน 2 ตำแหน่งทศนิยม');return;}
+        if(!confirm('ยืนยันแก้ยอด '+r.name+' เป็น '+fmt(value)+' บาท?'))return;
+        edit.disabled=true;
+        try{await updateDoc(doc(db,'answers',r.id),{amount:value});showMessage('แก้ไขยอดสำเร็จ');}
+        catch(e){showMessage('แก้ไขไม่ได้: '+e.message);}
+        finally{edit.disabled=false;}
+      };
+      const del=document.createElement('button');del.textContent='ลบ';del.type='button';del.className='danger';
+      del.onclick=async()=>{
+        if(!confirm('ลบคำตอบของ '+r.name+' จำนวน '+fmt(r.amount)+' บาทอย่างถาวร?'))return;
+        del.disabled=true;
+        try{await deleteDoc(doc(db,'answers',r.id));showMessage('ลบรายการสำเร็จ');}
+        catch(e){showMessage('ลบไม่ได้: '+e.message);}
+        finally{del.disabled=false;}
+      };
+      actions.append(edit,del);row.append(info,actions);list.append(row);
+    });
+  };
+  search.oninput=drawList;
+  onAuthStateChanged(auth,user=>{
+    currentUser=user;
+    $('loginForm').hidden=!!user;
+    $('adminActions').hidden=!user;
+    $('adminEmail').textContent=user?.email||'';
+    $('status').textContent=user?'เข้าสู่ระบบแล้ว':'กรุณาเข้าสู่ระบบ';
+    if(unsubscribe){unsubscribe();unsubscribe=null;}
+    adminRows=[];list.replaceChildren();$('adminSummary').textContent='';
+    if(user){
+      unsubscribe=onSnapshot(answers,snap=>{
+        adminRows=snap.docs.map(d=>({id:d.id,...d.data()})).filter(r=>typeof r.name==='string'&&typeof r.amount==='number');
+        adminRows.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+        drawList();
+      },e=>showMessage('โหลดรายการไม่ได้: '+e.message));
+    }
+  });
+  $('loginForm').onsubmit=async e=>{e.preventDefault();try{await signInWithEmailAndPassword(auth,$('email').value,$('password').value);showMessage('เข้าสู่ระบบสำเร็จ');}catch(err){showMessage(err.message);}};
   $('logout').onclick=()=>signOut(auth);
-  $('reset').onclick=async()=>{if(!confirm('ล้างคำตอบทั้งหมดจริงหรือไม่? การดำเนินการนี้ย้อนกลับไม่ได้'))return;try{const snap=await getDocs(answers);for(let i=0;i<snap.docs.length;i+=400){const batch=writeBatch(db);snap.docs.slice(i,i+400).forEach(d=>batch.delete(d.ref));await batch.commit();}$('adminMessage').textContent='ล้างยอดเรียบร้อยแล้ว';}catch(err){$('adminMessage').textContent='ล้างไม่ได้: '+err.message;}};
+  $('reset').onclick=async()=>{
+    if(!confirm('ล้างคำตอบทั้งหมดจริงหรือไม่? การดำเนินการนี้ย้อนกลับไม่ได้'))return;
+    try{const snap=await getDocs(answers);for(let i=0;i<snap.docs.length;i+=400){const batch=writeBatch(db);snap.docs.slice(i,i+400).forEach(d=>batch.delete(d.ref));await batch.commit();}showMessage('ล้างยอดเรียบร้อยแล้ว');}
+    catch(err){showMessage('ล้างไม่ได้: '+err.message);}
+  };
 }
